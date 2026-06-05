@@ -1,0 +1,22 @@
+# ROOT / ACLiC build artifacts
+*_C.so
+*_C.d
+*_C_ACLiC_dict_rdict.pcm
+*.so
+*.d
+*.pcm
+*.o
+
+# Generated ROOT files (fit inputs/outputs, skims, flux, results)
+*.root
+
+# Generated plots and logs
+*.pdf
+*.png
+*.log
+
+# TMVA training output (weights, transformed trees)
+tmva_dataset/
+
+# Misc scratch
+resume
