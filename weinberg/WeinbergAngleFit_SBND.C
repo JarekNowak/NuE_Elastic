@@ -288,9 +288,12 @@ void GeneratePlaceholderHistograms() {
   g_hFlux = new TH1D("h_flux",
     "BNB #nu_{#mu} flux;E_{#nu} [GeV];#Phi [cm^{-2}POT^{-1}GeV^{-1}]",
     nE, Elo, Ehi);
+  // Realistic BNB ν_μ normalisation (~3×10⁻⁸ /cm²/POT/GeV at peak, matching the
+  // NMM placeholder). The previous 1.2×10⁻¹¹ was ~3000× too small, giving
+  // sub-event-per-bin predictions and leaving the demo fit unconstrained.
   for (Int_t i = 1; i <= nE; ++i) {
     Double_t E   = g_hFlux->GetBinCenter(i);
-    Double_t phi = 1.2e-11 * TMath::Gaus(E, 0.7, 0.25);
+    Double_t phi = 3.0e-8 * TMath::Gaus(E, 0.7, 0.25);
     g_hFlux->SetBinContent(i, phi);
   }
 
