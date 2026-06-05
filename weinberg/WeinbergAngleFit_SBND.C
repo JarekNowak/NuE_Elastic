@@ -196,8 +196,14 @@ TH1D* SmearToReco(TH1D* hTrue) {
   const Int_t nReco = g_hSmear->GetNbinsX();
   const Int_t nTrue = g_hSmear->GetNbinsY();
 
-  TH1D* hReco = (TH1D*)g_hData->Clone("h_reco_pred");
-  hReco->Reset();
+  // Build the reco histogram from the smear matrix's own X-axis rather than
+  // cloning g_hData: the placeholder generator calls SmearToReco before g_hData
+  // exists, so cloning it null-dereferenced. The smear X-axis equals the data
+  // axis by construction, so the real-input result is unchanged.
+  TH1D* hReco = new TH1D("h_reco_pred", ";T_{e}^{reco} [GeV];Events/bin",
+                         nReco,
+                         g_hSmear->GetXaxis()->GetXmin(),
+                         g_hSmear->GetXaxis()->GetXmax());
   hReco->SetDirectory(nullptr);
 
   for (Int_t iR = 1; iR <= nReco; ++iR) {
@@ -548,54 +554,60 @@ void WeinbergAngleFit_SBND(const char* inputFile = "") {
             << "║  Weinberg Angle Fit  —  SBND  ν_μ-e elastic scattering       ║\n"
             << "╚══════════════════════════════════════════════════════════════╝\n\n";
 
-  // ── Load or generate histograms ───────────────────────────────────────────
+  // ── Load histograms ───────────────────────────────────────────────────────
+  // An explicit input file REQUIRES a complete, valid histogram set. A missing
+  // or incomplete file is a hard error — never a silent fall-back to placeholder
+  // pseudo-data, which would print an authoritative-looking but fabricated
+  // result. Placeholder/demo mode is entered ONLY when no input file is given.
   TFile* fIn = nullptr;
-  bool   usePlaceholder = true;
 
   if (inputFile && strlen(inputFile) > 0) {
     fIn = TFile::Open(inputFile, "READ");
     if (!fIn || fIn->IsZombie()) {
-      std::cerr << "[WARN] Cannot open '" << inputFile
-                << "'. Falling back to placeholder histograms.\n";
-    } else {
-      g_hData  = dynamic_cast<TH1D*>(fIn->Get(Setup::DATA_HIST));
-      g_hEff   = dynamic_cast<TH1D*>(fIn->Get(Setup::EFF_HIST));
-      g_hSmear = dynamic_cast<TH2D*>(fIn->Get(Setup::SMEAR_HIST));
-      g_hFlux  = dynamic_cast<TH1D*>(fIn->Get(Setup::FLUX_HIST));
-      g_hBkg   = dynamic_cast<TH1D*>(fIn->Get(Setup::BKG_HIST));
-
-      if (!g_hData || !g_hEff || !g_hSmear || !g_hFlux) {
-        std::cerr << "[WARN] Required histograms not found in file. "
-                  << "Falling back to placeholder.\n";
-      } else {
-        g_hData->SetDirectory(nullptr);
-        g_hEff->SetDirectory(nullptr);
-        g_hSmear->SetDirectory(nullptr);
-        g_hFlux->SetDirectory(nullptr);
-        if (g_hBkg) g_hBkg->SetDirectory(nullptr);
-        usePlaceholder = false;
-
-        // Normalise smearing matrix columns if not already done
-        Int_t nReco = g_hSmear->GetNbinsX();
-        Int_t nTrue = g_hSmear->GetNbinsY();
-        for (Int_t iT = 1; iT <= nTrue; ++iT) {
-          Double_t colSum = 0.0;
-          for (Int_t iR = 1; iR <= nReco; ++iR)
-            colSum += g_hSmear->GetBinContent(iR, iT);
-          if (colSum > 0.0)
-            for (Int_t iR = 1; iR <= nReco; ++iR)
-              g_hSmear->SetBinContent(iR, iT,
-                g_hSmear->GetBinContent(iR, iT) / colSum);
-        }
-      }
+      std::cerr << "[ERROR] Cannot open input file '" << inputFile
+                << "'. Aborting.\n";
+      return;
     }
-  }
 
-  if (usePlaceholder) {
-    // FIX [BUG-3]: original code allocated temporaries for flux/eff/smear,
-    // then called GeneratePlaceholderHistograms() which overwrote the global
-    // pointers — leaking the temporaries.  Now we call the function directly
-    // with no prior allocation; it creates all globals itself.
+    g_hData  = dynamic_cast<TH1D*>(fIn->Get(Setup::DATA_HIST));
+    g_hEff   = dynamic_cast<TH1D*>(fIn->Get(Setup::EFF_HIST));
+    g_hSmear = dynamic_cast<TH2D*>(fIn->Get(Setup::SMEAR_HIST));
+    g_hFlux  = dynamic_cast<TH1D*>(fIn->Get(Setup::FLUX_HIST));
+    g_hBkg   = dynamic_cast<TH1D*>(fIn->Get(Setup::BKG_HIST));
+
+    if (!g_hData || !g_hEff || !g_hSmear || !g_hFlux) {
+      std::cerr << "[ERROR] Required histogram(s) missing from '" << inputFile
+                << "'.\n"
+                << "        Need h_data, h_eff, h_smear, h_flux (h_bkg optional).\n"
+                << "        NOTE: NuESelection.C / NuEOptimize.C do NOT write"
+                << " h_flux — merge the flux\n"
+                << "        in first (run_analysis.sh does this) and fit the merged"
+                << " WeinbergFit_inputs.root.\n"
+                << "        Aborting.\n";
+      fIn->Close();
+      return;
+    }
+
+    g_hData->SetDirectory(nullptr);
+    g_hEff->SetDirectory(nullptr);
+    g_hSmear->SetDirectory(nullptr);
+    g_hFlux->SetDirectory(nullptr);
+    if (g_hBkg) g_hBkg->SetDirectory(nullptr);
+
+    // Normalise smearing matrix columns if not already done
+    Int_t nReco = g_hSmear->GetNbinsX();
+    Int_t nTrue = g_hSmear->GetNbinsY();
+    for (Int_t iT = 1; iT <= nTrue; ++iT) {
+      Double_t colSum = 0.0;
+      for (Int_t iR = 1; iR <= nReco; ++iR)
+        colSum += g_hSmear->GetBinContent(iR, iT);
+      if (colSum > 0.0)
+        for (Int_t iR = 1; iR <= nReco; ++iR)
+          g_hSmear->SetBinContent(iR, iT,
+            g_hSmear->GetBinContent(iR, iT) / colSum);
+    }
+  } else {
+    // No input file → placeholder/demo mode (creates all global histograms).
     GeneratePlaceholderHistograms();
   }
 

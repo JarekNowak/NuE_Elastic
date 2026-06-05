@@ -54,7 +54,7 @@ meaningful — the optimum is background-MC-statistics-limited.
 
 **Neutrino magnetic moment (NMM) analysis** (`magnetic_moment/`):
 ```bash
-# Box-cut selection optimised for low-T_e (10–600 MeV, 60 × 10 MeV bins):
+# Box-cut selection optimised for low-T_e (10–600 MeV, 120 × 5 MeV bins):
 root -l -b -q magnetic_moment/NuMMSelection.C
 root -l -b -q 'magnetic_moment/NuMMSelection.C("input.root","out.root")'
 # Output: NuMMSelection_output.root, NuMMSelection_output.{pdf,png}
@@ -122,7 +122,7 @@ including file, so this works regardless of CWD).
 **What deliberately stays per-macro** (it genuinely differs between analyses, so
 do *not* move it into the shared header): the tuned working-point thresholds
 (`Cuts`/`Pre`/`PreCuts`), the reco-energy `Binning` (120 bins 0–1.2 GeV for the
-Weinberg fit vs 60 bins 0–0.6 GeV for NMM), the cut-flow `enum`/labels, and the
+Weinberg fit vs 120 bins 0–0.6 GeV for NMM), the cut-flow `enum`/labels, and the
 two flavours of `ElecCandidate`/`FindElecCandidate` (box-cut `Double_t` vs MVA
 `Float_t`). `magnetic_moment/NuMM_common.h` keeps only these NMM-MVA-specific
 pieces and includes `NuE_common.h` for the rest. `NuEOptimize.C` reads the flat
@@ -246,7 +246,7 @@ Contains two macros for the NMM measurement:
 
 **`NuMMSelection.C`** — same structure as `NuESelection.C` but optimised for NMM:
 - `SHOWER_E_MIN = 0.010 GeV` (10 MeV, down from 30 MeV) to access the 1/T NMM excess
-- `SHOWER_E_MAX = 0.600 GeV` and `N_RECO = 60` bins (0–0.6 GeV, 10 MeV/bin)
+- `SHOWER_E_MAX = 0.600 GeV` and `N_RECO = 120` bins (0–0.6 GeV, 5 MeV/bin)
 - Tighter `RAZZLE_ELEC_MIN = 0.70` (vs 0.50 in NuESelection)
 - Tighter `DEDX_MIN = 0.8` MeV/cm (vs 0.5), `DEDX_MAX = 3.0` MeV/cm (vs 3.5)
 - Tighter `ETHETA2_MAX = 0.003` GeV ≈ 3 MeV (vs 0.010 GeV); exploits ν-e forward collimation

@@ -9,7 +9,7 @@
   Differences from NuESelection.C:
     • SHOWER_E_MIN  lowered from 30 MeV to 10 MeV
     • SHOWER_E_MAX  reduced  from 1500 MeV to 600 MeV (BNB-relevant range)
-    • Output binning: 60 × 10 MeV bins, 0–0.6 GeV
+    • Output binning: 120 × 5 MeV bins, 0–0.6 GeV
 
   All other cuts (FV, Razzled PID, track score, dE/dx, θ, E×θ²) unchanged.
 
@@ -68,7 +68,7 @@ namespace Cuts {
 }
 
 // ───────────────────────── OUTPUT BINNING ────────────────────────────────────
-// Fine 10 MeV bins to resolve the 1/T NMM excess at low T_e.
+// Fine 5 MeV bins (120 over 0–0.6 GeV) to resolve the 1/T NMM excess at low T_e.
 
 namespace Binning {
   const Int_t    N_RECO = 120;
@@ -269,11 +269,14 @@ void NuMMSelection(
     Double_t sliceInter = (*b.reco_sliceInteraction)[sliceIdx];
     Double_t pcaAngle   = GetPCAAngle(b, sliceID);
 
-    Double_t vtxX = (*b.reco_sliceTrueVX)[sliceIdx];
-    Double_t vtxY = (*b.reco_sliceTrueVY)[sliceIdx];
-    Double_t vtxZ = (*b.reco_sliceTrueVZ)[sliceIdx];
-    if (Sentinel::valid(vtxX) && Sentinel::valid(vtxY) && Sentinel::valid(vtxZ))
-      if (!FV::inFV(vtxX, vtxY, vtxZ)) continue;
+    // Use the GENUINE reconstructed neutrino vertex (reco_neutrinoVX/VY/VZ), not
+    // reco_sliceTrueVX — the latter is truth-matched: unavailable in real data
+    // and filled for only ~38% of signal events, which made this FV cut a no-op
+    // on data (invalid vertices fell through the validity guard and PASSED).
+    // Mirrors NuESelection.C; GetRecoNuVertex comes from common/NuE_common.h.
+    Double_t vtxX, vtxY, vtxZ;
+    if (!GetRecoNuVertex(b, sliceID, vtxX, vtxY, vtxZ)) continue;
+    if (!FV::inFV(vtxX, vtxY, vtxZ)) continue;
     cutflow[kFiducialVtx][0]++;
     if (isTrueSignal) cutflow[kFiducialVtx][1]++;
 
