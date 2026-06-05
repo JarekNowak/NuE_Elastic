@@ -243,32 +243,41 @@ TH1D* BuildRecoPrediction(Double_t mu_par) {
   return hPred;
 }
 
-// ─────────────────── CHI-SQUARED FUNCTION FOR MINUIT ─────────────────────────
+// ─────────────────── CHI-SQUARED (Baker–Cousins Poisson LR) ──────────────────
 
-void FCN(Int_t& npar, Double_t* grad, Double_t& fval,
-         Double_t* par, Int_t iflag) {
-  Double_t mu_par = par[0];
+/// Baker–Cousins (Poisson likelihood-ratio) χ² contribution for one bin:
+///     2·[ pred − obs + obs·ln(obs/pred) ]   (→ 2·pred as obs → 0).
+/// Unlike Neyman χ² (err² = obs) this is valid for low/zero counts and keeps
+/// empty bins (obs=0 → 2·pred) — essential here, because the NMM upper limit is
+/// driven by the low-T bins where the 1/T excess would appear but the SM
+/// expectation is small. Asymptotically χ²-distributed, so the Δχ² = 2.71
+/// (one-sided 90% CL) threshold stays valid.
+inline Double_t PoissonChi2Bin(Double_t obs, Double_t pred) {
+  const Double_t tiny = 1e-9;
+  if (pred < tiny) pred = tiny;            // guard ln()/division; pred is ≥ 0
+  if (obs <= 0.0)  return 2.0 * pred;      // obs·ln(obs/pred) → 0 as obs → 0
+  return 2.0 * (pred - obs + obs * std::log(obs / pred));
+}
 
+/// Baker–Cousins χ² of the data vs the SM + μ²·NMM prediction at mu_par.
+/// Single implementation shared by FCN, the best-fit χ², the 90% CL upper-limit
+/// scan and the Δχ² scan plot (previously four separate copies of this loop).
+Double_t Chi2AtMu(Double_t mu_par) {
   TH1D* hPred = BuildRecoPrediction(mu_par);
   Double_t chi2  = 0.0;
   Int_t    nBins = g_hData->GetNbinsX();
-
   for (Int_t i = 1; i <= nBins; ++i) {
     if (Setup::FIT_BIN_MIN > 0 && i < Setup::FIT_BIN_MIN) continue;
     if (Setup::FIT_BIN_MAX > 0 && i > Setup::FIT_BIN_MAX) continue;
-
-    Double_t obs  = g_hData->GetBinContent(i);
-    Double_t pred = hPred->GetBinContent(i);
-    Double_t err  = g_hData->GetBinError(i);
-
-    if (err <= 0 && obs <= 0) continue;
-    if (err <= 0) err = TMath::Sqrt(obs);
-    if (err <= 0) err = 1.0;
-
-    chi2 += (obs - pred) * (obs - pred) / (err * err);
+    chi2 += PoissonChi2Bin(g_hData->GetBinContent(i), hPred->GetBinContent(i));
   }
   delete hPred;
-  fval = chi2;
+  return chi2;
+}
+
+void FCN(Int_t& npar, Double_t* grad, Double_t& fval,
+         Double_t* par, Int_t iflag) {
+  fval = Chi2AtMu(par[0]);
 }
 
 // ──────────────────────── PLOTTING HELPERS ───────────────────────────────────
@@ -368,22 +377,8 @@ void DrawChiScan(Double_t mu_bf, Double_t chi2_min, Double_t mu_ul90) {
 
   TGraph* gScan = new TGraph(N);
   for (Int_t i = 0; i < N; ++i) {
-    Double_t mu   = muhi * i / (N - 1.0);
-    TH1D*    hP   = BuildRecoPrediction(mu);
-    Double_t chi2 = 0.0;
-    Int_t    nB   = g_hData->GetNbinsX();
-    for (Int_t j = 1; j <= nB; ++j) {
-      if (Setup::FIT_BIN_MIN > 0 && j < Setup::FIT_BIN_MIN) continue;
-      if (Setup::FIT_BIN_MAX > 0 && j > Setup::FIT_BIN_MAX) continue;
-      Double_t obs  = g_hData->GetBinContent(j);
-      Double_t pred = hP->GetBinContent(j);
-      Double_t err  = g_hData->GetBinError(j);
-      if (err <= 0 && obs <= 0) continue;
-      if (err <= 0) err = (obs > 0) ? TMath::Sqrt(obs) : 1.0;
-      chi2 += (obs - pred) * (obs - pred) / (err * err);
-    }
-    delete hP;
-    gScan->SetPoint(i, mu, chi2 - chi2_min);
+    Double_t mu = muhi * i / (N - 1.0);
+    gScan->SetPoint(i, mu, Chi2AtMu(mu) - chi2_min);
   }
 
   gStyle->SetOptStat(0);
@@ -522,16 +517,17 @@ void NuMMFit_SBND(const char* inputFile = "",
     GeneratePlaceholders();  // also calls PrecomputeSpectra internally
   }
 
-  // Effective degrees of freedom
+  // Effective degrees of freedom: the Baker–Cousins sum runs over every in-range
+  // bin, so count all of them (not just non-empty ones), minus the free parameter.
   Int_t nDF = 0;
   Int_t nDataBins = g_hData->GetNbinsX();
   for (Int_t i = 1; i <= nDataBins; ++i) {
     if (Setup::FIT_BIN_MIN > 0 && i < Setup::FIT_BIN_MIN) continue;
     if (Setup::FIT_BIN_MAX > 0 && i > Setup::FIT_BIN_MAX) continue;
-    if (g_hData->GetBinContent(i) > 0) ++nDF;
+    ++nDF;
   }
   --nDF;  // 1 free parameter (μ_ν)
-  printf("[INFO] Data bins with content: %d\n", nDF + 1);
+  printf("[INFO] Fitted bins (in range): %d\n", nDF + 1);
   printf("[INFO] Effective ndf: %d\n\n", nDF);
 
   // ── TMinuit fit ───────────────────────────────────────────────────────────
@@ -562,45 +558,18 @@ void NuMMFit_SBND(const char* inputFile = "",
   // Physical best-fit: enforce non-negative
   Double_t mu_phys = std::max(0.0, mu_bf);
 
-  // Compute χ² at best-fit
-  Double_t chi2_min = 0.0;
-  {
-    TH1D* hP = BuildRecoPrediction(mu_phys);
-    for (Int_t i = 1; i <= nDataBins; ++i) {
-      if (Setup::FIT_BIN_MIN > 0 && i < Setup::FIT_BIN_MIN) continue;
-      if (Setup::FIT_BIN_MAX > 0 && i > Setup::FIT_BIN_MAX) continue;
-      Double_t obs  = g_hData->GetBinContent(i);
-      Double_t pred = hP->GetBinContent(i);
-      Double_t err  = g_hData->GetBinError(i);
-      if (err <= 0 && obs <= 0) continue;
-      if (err <= 0) err = (obs > 0) ? TMath::Sqrt(obs) : 1.0;
-      chi2_min += (obs-pred)*(obs-pred)/(err*err);
-    }
-    delete hP;
-  }
+  // χ² at best-fit (Baker–Cousins)
+  Double_t chi2_min = Chi2AtMu(mu_phys);
 
   // ── 90% CL upper limit via Δχ² scan ──────────────────────────────────────
-  // Scan mu from mu_phys upward until Δχ² > 2.71
+  // Scan mu from mu_phys upward until Δχ² ≥ 2.71 (one-sided 90% CL).
   Double_t mu_ul90 = Setup::MU_SCAN_MAX;
   {
     const Int_t    Nscan = Setup::MU_SCAN_STEPS;
     const Double_t muhi  = Setup::MU_SCAN_MAX;
     for (Int_t i = 0; i < Nscan; ++i) {
       Double_t mu = mu_phys + (muhi - mu_phys) * i / (Nscan - 1.0);
-      TH1D* hP = BuildRecoPrediction(mu);
-      Double_t chi2 = 0.0;
-      for (Int_t j = 1; j <= nDataBins; ++j) {
-        if (Setup::FIT_BIN_MIN > 0 && j < Setup::FIT_BIN_MIN) continue;
-        if (Setup::FIT_BIN_MAX > 0 && j > Setup::FIT_BIN_MAX) continue;
-        Double_t obs  = g_hData->GetBinContent(j);
-        Double_t pred = hP->GetBinContent(j);
-        Double_t err  = g_hData->GetBinError(j);
-        if (err <= 0 && obs <= 0) continue;
-        if (err <= 0) err = (obs > 0) ? TMath::Sqrt(obs) : 1.0;
-        chi2 += (obs-pred)*(obs-pred)/(err*err);
-      }
-      delete hP;
-      if (chi2 - chi2_min >= 2.71) { mu_ul90 = mu; break; }
+      if (Chi2AtMu(mu) - chi2_min >= 2.71) { mu_ul90 = mu; break; }
     }
   }
 

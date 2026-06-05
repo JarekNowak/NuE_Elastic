@@ -164,7 +164,7 @@ Adjust `FIT_BIN_MIN`/`FIT_BIN_MAX` to change the fitted energy range (e.g., to a
 
 ### Minimisation
 
-TMinuit with MIGRAD → HESSE → MINOS sequence. The FCN implements Neyman χ² with data errors (sqrt(obs) for Poisson bins). HESSE gives the parabolic uncertainty; MINOS gives asymmetric profile-likelihood errors — both are saved to `WeinbergAngleFit_SBND_results.root` as a `TVectorD fit_results[6]` = [sin2thW, err_hesse, chi2, ndf, eplus, eminus].
+TMinuit with MIGRAD → HESSE → MINOS sequence. The FCN implements the Baker–Cousins Poisson likelihood-ratio χ² (`PoissonChi2Bin`: `2·[pred − obs + obs·ln(obs/pred)]`, → `2·pred` for empty bins) summed over every in-range bin — valid for low/zero counts and, unlike Neyman χ², it keeps empty bins (whose constraint matters for the NMM upper limit). It stays asymptotically χ²-distributed, so HESSE/MINOS errors and the Δχ² intervals remain valid. HESSE gives the parabolic uncertainty; MINOS gives asymmetric profile-likelihood errors — both are saved to `WeinbergAngleFit_SBND_results.root` as a `TVectorD fit_results[6]` = [sin2thW, err_hesse, chi2, ndf, eplus, eminus]. The NMM fit (`NuMMFit_SBND.C`) uses the same statistic via a shared `Chi2AtMu()` helper (FCN, best-fit χ², the 90% CL scan and the Δχ² plot all call it).
 
 ### Output files
 

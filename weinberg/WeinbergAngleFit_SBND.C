@@ -230,7 +230,20 @@ TH1D* BuildRecoPrediction(Double_t sin2thW) {
 
 // ─────────────────── CHI-SQUARED FUNCTION FOR MINUIT ─────────────────────────
 
-/// χ² function passed to TMinuit (Neyman χ² with data errors).
+/// Baker–Cousins (Poisson likelihood-ratio) χ² contribution for one bin:
+///     2·[ pred − obs + obs·ln(obs/pred) ]   (→ 2·pred as obs → 0).
+/// Unlike Neyman χ² (err² = obs) this is valid for low/zero counts and keeps
+/// empty bins — for them obs=0 contributes 2·pred, which is exactly the
+/// constraint that empty bins carry. It is asymptotically χ²-distributed, so
+/// HESSE/MINOS errors and Δχ² confidence intervals remain valid.
+inline Double_t PoissonChi2Bin(Double_t obs, Double_t pred) {
+  const Double_t tiny = 1e-9;
+  if (pred < tiny) pred = tiny;            // guard ln()/division; pred is ≥ 0
+  if (obs <= 0.0)  return 2.0 * pred;      // obs·ln(obs/pred) → 0 as obs → 0
+  return 2.0 * (pred - obs + obs * std::log(obs / pred));
+}
+
+/// χ² function passed to TMinuit (Baker–Cousins Poisson likelihood-ratio).
 void FCN(Int_t& npar, Double_t* grad, Double_t& fval,
          Double_t* par, Int_t iflag) {
   Double_t sin2thW = par[0];
@@ -246,23 +259,11 @@ void FCN(Int_t& npar, Double_t* grad, Double_t& fval,
   Int_t    nBins = g_hData->GetNbinsX();
 
   for (Int_t i = 1; i <= nBins; ++i) {
-    
     if (Setup::FIT_BIN_MIN > 0 && i < Setup::FIT_BIN_MIN) continue;
     if (Setup::FIT_BIN_MAX > 0 && i > Setup::FIT_BIN_MAX) continue;
-      
-    Double_t obs  = g_hData->GetBinContent(i);
-    Double_t pred = hPred->GetBinContent(i);
-    Double_t err  = g_hData->GetBinError(i);
 
-    // Skip truly empty bins (no data, no usable uncertainty)
-    if (err <= 0 && obs <= 0) continue;
-
-    // FIX [BUG-2]: was "err = 1.0" — should be sqrt(obs) for Poisson statistics.
-    // The comment said "use Poisson" but the original code set err=1 unconditionally.
-    if (err <= 0) err = TMath::Sqrt(obs);
-    if (err <= 0) err = 1.0;  // last-resort guard for truly zero-obs bins
-
-    chi2 += (obs - pred) * (obs - pred) / (err * err);
+    // Every in-range bin contributes (empty bins included — that is the point).
+    chi2 += PoissonChi2Bin(g_hData->GetBinContent(i), hPred->GetBinContent(i));
   }
 
   fval = chi2;
@@ -617,17 +618,18 @@ void WeinbergAngleFit_SBND(const char* inputFile = "") {
     return;
   }
 
+  // ndf = (bins entering the χ²) − (free parameters). The Baker–Cousins sum runs
+  // over every in-range bin, so count all of them (not just non-empty ones).
   Int_t nDataBins = g_hData->GetNbinsX();
   Int_t nDF = 0;
   for (Int_t i = 1; i <= nDataBins; ++i) {
-    bool inRange = true;
-    if (Setup::FIT_BIN_MIN > 0 && i < Setup::FIT_BIN_MIN) inRange = false;
-    if (Setup::FIT_BIN_MAX > 0 && i > Setup::FIT_BIN_MAX) inRange = false;
-    if (inRange && g_hData->GetBinContent(i) > 0) ++nDF;
+    if (Setup::FIT_BIN_MIN > 0 && i < Setup::FIT_BIN_MIN) continue;
+    if (Setup::FIT_BIN_MAX > 0 && i > Setup::FIT_BIN_MAX) continue;
+    ++nDF;
   }
   --nDF; // 1 free parameter
 
-  std::cout << "[INFO] Data bins with content: " << nDF + 1 << "\n"
+  std::cout << "[INFO] Fitted bins (in range):  " << nDF + 1 << "\n"
             << "[INFO] Free parameters:         1  (sin²θ_W)\n"
             << "[INFO] Effective ndf:           " << nDF << "\n\n";
 
